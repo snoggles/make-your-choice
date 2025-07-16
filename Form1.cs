@@ -364,7 +364,6 @@ namespace MakeYourChoice
             {
                 Text     = "Developer: Ky",
                 Font     = new Font(Font.FontFamily, 8),
-                LinkArea = new LinkArea(11, 2),
                 AutoSize = true,
                 Location = new Point(10, lblTitle.Bottom + 10)
             };
@@ -377,7 +376,7 @@ namespace MakeYourChoice
 
             var lblVersion = new Label
             {
-                Text     = "Version 0.6.1\nWindows 7 Service Pack 1 or higher.",
+                Text     = "Version 0.6.2\nWindows 7 Service Pack 1 or higher.",
                 Font     = new Font(Font.FontFamily, 8, FontStyle.Italic),
                 AutoSize = true,
                 Location = new Point(10, lblDeveloper.Bottom + 10)
@@ -386,9 +385,14 @@ namespace MakeYourChoice
             {
                 Text         = "Awesome!",
                 DialogResult = DialogResult.OK,
-                Size         = new Size(125, 25),
-                Location     = new Point(about.ClientSize.Width - 85, about.ClientSize.Height - 35)
+                AutoSize     = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Anchor       = AnchorStyles.Bottom | AnchorStyles.Right,
             };
+            btnOk.Location = new Point(
+                about.ClientSize.Width - btnOk.Width - 10,
+                about.ClientSize.Height - btnOk.Height - 10
+            );
 
             about.Controls.Add(lblTitle);
             about.Controls.Add(lblVersion);
