@@ -1,11 +1,11 @@
 # Make Your Choice
 Make Your Choice is a server region changer for Dead by Daylight. It allows you to play on any server of choice.  
 
-<img src="https://i.imgur.com/PYwVHac.png" alt="Main" height="400"> <img src="https://i.imgur.com/nD6kc7V.png" alt="Main" height="400">  
+<img src="https://i.imgur.com/wyNJ7HO.png" alt="Main" height="400"> <img src="https://i.imgur.com/J2pI1sy.png" alt="Main" height="400">  
 *Screenshots taken on Windows 10 with a Windows 7 skin.*
 
 # Download
-Download is available for free at [kurocat.net](kurocat.net/make-your-choice). Please make sure your system supports the software. Make Your Choice supports all Windows operating systems that DbD has ever offered support for. 
+The program is available for free on the [Releases tab](https://codeberg.org/ky/make-your-choice/releases). Please make sure your system supports the software. Make Your Choice supports all Windows operating systems that DbD has ever offered support for. 
 
 ## Supported Systems
 - Windows 7 (SP1)
