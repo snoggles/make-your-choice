@@ -1,26 +1,28 @@
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json.Serialization;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Net.NetworkInformation;
+using System.Net;
 using System.Text;
 using System.Windows.Forms;
-using System.Net.Http;
-using System.Net.Http.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using System.Text.Json;
+using System.Linq;
 
 namespace MakeYourChoice
 {
     public class Form1 : Form
     {
-        // TODO: Fix these links
         private const string RepoUrl    = "https://codeberg.org/ky/make-your-choice";
         private const string WebsiteUrl = "https://kurocat.net";
         private const string DiscordUrl = "https://discord.gg/gnvtATeVc4";
-        private const string CurrentVersion = "0.6.5";
-        private const string Owner = "ky";
+        private const string CurrentVersion = "0.7.0";
+        private const string Developer = "ky";
         private const string Repo  = "make-your-choice";
 
         private readonly Dictionary<string, string[]> _regions = new()
@@ -59,13 +61,75 @@ namespace MakeYourChoice
         private Button          _btnApply;
         private Button          _btnRevert;
         private Timer           _pingTimer;
+        private enum ApplyMode { Gatekeep, UniversalRedirect }
+        private ApplyMode _applyMode = ApplyMode.Gatekeep;
+        private enum BlockMode { Both, OnlyPing, OnlyService }
+        private BlockMode _blockMode = BlockMode.Both;
+
+        // Path for saving user settings
+        private static string SettingsFilePath =>
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "MakeYourChoice",
+                "settings.json");
+
+        private class UserSettings
+        {
+            public ApplyMode ApplyMode { get; set; }
+            public BlockMode BlockMode { get; set; }
+        }
+
+        private void LoadSettings()
+        {
+            try
+            {
+                var folder = Path.GetDirectoryName(SettingsFilePath);
+                if (!Directory.Exists(folder))
+                    return;
+                if (!File.Exists(SettingsFilePath))
+                    return;
+                var json = File.ReadAllText(SettingsFilePath);
+                var settings = JsonSerializer.Deserialize<UserSettings>(json);
+                if (settings != null)
+                {
+                    _applyMode = settings.ApplyMode;
+                    _blockMode = settings.BlockMode;
+                }
+            }
+            catch
+            {
+                // ignore load errors
+            }
+        }
+
+        private void SaveSettings()
+        {
+            try
+            {
+                var folder = Path.GetDirectoryName(SettingsFilePath);
+                if (!Directory.Exists(folder))
+                    Directory.CreateDirectory(folder);
+                var settings = new UserSettings
+                {
+                    ApplyMode = _applyMode,
+                    BlockMode = _blockMode
+                };
+                var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(SettingsFilePath, json);
+            }
+            catch
+            {
+                // ignore save errors
+            }
+        }
 
         public Form1()
         {
             InitializeComponent();
             this.Icon = new Icon(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico"));
             StartPingTimer();
-            CheckForUpdatesAsync(true);
+            _ = CheckForUpdatesAsync(true);
+            LoadSettings();
         }
 
         private void InitializeComponent()
@@ -82,27 +146,33 @@ namespace MakeYourChoice
 
             // ── MenuStrip ────────────────────────────────────────────────
             _menuStrip = new MenuStrip();
+
             var mSource = new ToolStripMenuItem($"v{CurrentVersion}");
             var miRepo  = new ToolStripMenuItem("Repository");
             miRepo.Click += (_,__) => OpenUrl(RepoUrl);
+            var miAbout   = new ToolStripMenuItem("About");
+            miAbout.Click += (_,__) => ShowAboutDialog();
             var miCheck  = new ToolStripMenuItem("Check for updates");
             miCheck.Click += async (_,__) => await CheckForUpdatesAsync(false);
             mSource.DropDownItems.Add(miCheck);
             mSource.DropDownItems.Add(miRepo);
+            mSource.DropDownItems.Add(miAbout);
+
+            var mOptions = new ToolStripMenuItem("Options");
+            var miSettings = new ToolStripMenuItem("Program settings");
+            miSettings.Click += (_,__) => ShowSettingsDialog();
+            mOptions.DropDownItems.Add(miSettings);
 
             var mHelp     = new ToolStripMenuItem("Help");
             var miWebsite = new ToolStripMenuItem("Website");
             var miDiscord = new ToolStripMenuItem("Discord");
-            var miAbout   = new ToolStripMenuItem("About");
             miWebsite.Click += (_,__) => OpenUrl(WebsiteUrl);
             miDiscord.Click += (_,__) => OpenUrl(DiscordUrl);
-            miAbout.Click   += (_,__) => ShowAboutDialog();
             mHelp.DropDownItems.Add(miWebsite);
             mHelp.DropDownItems.Add(miDiscord);
-            mHelp.DropDownItems.Add(new ToolStripSeparator());
-            mHelp.DropDownItems.Add(miAbout);
 
             _menuStrip.Items.Add(mSource);
+            _menuStrip.Items.Add(mOptions);
             _menuStrip.Items.Add(mHelp);
 
             // ── Tip label ────────────────────────────────────────────────
@@ -186,7 +256,7 @@ namespace MakeYourChoice
             {
                 using var client = new HttpClient();
                 // fetch all releases
-                var url = $"https://codeberg.org/api/v1/repos/{Owner}/{Repo}/releases";
+                var url = $"https://codeberg.org/api/v1/repos/{Developer}/{Repo}/releases";
                 var releases = await client.GetFromJsonAsync<List<Release>>(url);
                 if (releases == null || releases.Count == 0)
                 {
@@ -211,13 +281,13 @@ namespace MakeYourChoice
                 else
                 {
                     var resp = MessageBox.Show(
-                        $"A new version is available: {latest}.\nWould you like to update?",
+                        $"A new version is available: {latest}.\nWould you like to update?\n\nYour version: {CurrentVersion}.",
                         "Update Available",
                         MessageBoxButtons.YesNo,
                         MessageBoxIcon.Question
                     );
                     if (resp == DialogResult.Yes)
-                        OpenUrl($"https://codeberg.org/{Owner}/{Repo}/releases");
+                        OpenUrl($"https://codeberg.org/{Developer}/{Repo}/releases");
                 }
             }
             catch (Exception ex)
@@ -289,6 +359,98 @@ namespace MakeYourChoice
 
         private void BtnApply_Click(object sender, EventArgs e)
         {
+            // if universal redirect mode, redirect all endpoints to selected region's IPs
+            if (_applyMode == ApplyMode.UniversalRedirect)
+            {
+                if (_lv.CheckedItems.Count != 1)
+                {
+                    MessageBox.Show(
+                        "Please select exactly one region when using Universal Redirect mode.",
+                        "Universal Redirect",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var region = _lv.CheckedItems[0].Text;
+                var hosts  = _regions[region];
+                var serviceHost = hosts[0];
+                var pingHost    = hosts.Length > 1 ? hosts[1] : hosts[0];
+
+                // resolve via DNS lookup to obtain IP addresses
+                string svcIp, pingIp;
+                try
+                {
+                    var svcAddrs  = Dns.GetHostAddresses(serviceHost);
+                    var pingAddrs = Dns.GetHostAddresses(pingHost);
+                    if (svcAddrs.Length == 0 || pingAddrs.Length == 0)
+                        throw new Exception("DNS lookup returned no addresses");
+
+                    svcIp  = svcAddrs[0].ToString();
+                    pingIp = pingAddrs[0].ToString();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        "Failed to resolve IP addresses for Universal Redirect mode via DNS:\n" + ex.Message,
+                        "Universal Redirect Error",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                    return;
+                }
+
+                try
+                {
+                    var hostsPath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.System),
+                        "drivers\\etc\\hosts");
+                    File.Copy(hostsPath, hostsPath + ".bak", true);
+
+                    var sb = new StringBuilder();
+                    sb.AppendLine("# Edited by Make Your Choice (DbD Server Selector)");
+                    sb.AppendLine("# Universal Redirect mode: redirect all GameLift endpoints to selected region");
+                    sb.AppendLine($"# Need help? Discord: {DiscordUrl}");
+                    sb.AppendLine();
+
+                    foreach (var kv in _regions)
+                    {
+                        foreach (var h in kv.Value)
+                        {
+                            bool isPing = h.Contains("ping", StringComparison.OrdinalIgnoreCase);
+                            var ip = isPing ? pingIp : svcIp;
+                            sb.AppendLine($"{ip} {h}");
+                        }
+                        sb.AppendLine();
+                    }
+
+                    File.WriteAllText(hostsPath, sb.ToString());
+                    MessageBox.Show(
+                        "Hosts file updated successfully!",
+                        "Success",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    MessageBox.Show(
+                        "Please run as Administrator to modify the hosts file.",
+                        "Permission Denied",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        ex.Message,
+                        "Error",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Error);
+                }
+
+                return;
+            }
+
+            // existing gatekeep mode logic
             if (_lv.CheckedItems.Count == 0)
             {
                 MessageBox.Show(
@@ -299,17 +461,17 @@ namespace MakeYourChoice
                 return;
             }
 
-            var hostsPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.System),
-                "drivers\\etc\\hosts");
             try
             {
+                var hostsPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.System),
+                    "drivers\\etc\\hosts");
                 File.Copy(hostsPath, hostsPath + ".bak", true);
 
                 var sb = new StringBuilder();
                 sb.AppendLine("# Edited by Make Your Choice (DbD Server Selector)");
-                sb.AppendLine("# Unselected servers are blocked; selected servers are commented out.");
-                sb.AppendLine("# Need help? Discord: https://discord.gg/gnvtATeVc4");
+                sb.AppendLine("# Unselected servers are blocked (Gatekeep Mode); selected servers are commented out.");
+                sb.AppendLine($"# Need help? Discord: {DiscordUrl}");
                 sb.AppendLine();
 
                 foreach (ListViewItem item in _lv.Items)
@@ -317,6 +479,12 @@ namespace MakeYourChoice
                     bool allow = item.Checked;
                     foreach (var h in _regions[item.Text])
                     {
+                        bool isPing = h.Contains("ping", StringComparison.OrdinalIgnoreCase);
+                        bool include = _blockMode == BlockMode.Both
+                                       || (_blockMode == BlockMode.OnlyPing && isPing)
+                                       || (_blockMode == BlockMode.OnlyService && !isPing);
+                        if (!include)
+                            continue;
                         var prefix = allow ? "#" : "0.0.0.0".PadRight(9);
                         sb.AppendLine($"{prefix} {h}");
                     }
@@ -470,6 +638,89 @@ namespace MakeYourChoice
             about.Controls.Add(btnOk);
             about.AcceptButton = btnOk;
             about.ShowDialog(this);
+        }
+        private void ShowSettingsDialog()
+        {
+            var dialog = new Form
+            {
+                Text            = "Program Settings",
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition   = FormStartPosition.CenterParent,
+                ClientSize      = new Size(350, 215),
+                MaximizeBox     = false,
+                MinimizeBox     = false,
+                ShowInTaskbar   = false,
+                Padding         = new Padding(10)
+            };
+
+            // ── Mode selection ─────────────────────────────────────────
+            var modePanel = new GroupBox
+            {
+                Text     = "Method",
+                Location = new Point(10, 10),
+                Size     = new Size(320, 60)
+            };
+            var cbApplyMode = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location      = new Point(8, 20),
+                Width         = 300
+            };
+            // populate mode choices
+            cbApplyMode.Items.AddRange(new[] { "Gatekeep (default)", "Universal Redirect" });
+            cbApplyMode.SelectedIndex = _applyMode == ApplyMode.UniversalRedirect ? 1 : 0;
+            modePanel.Controls.Add(cbApplyMode);
+
+            var blockPanel = new GroupBox
+            {
+                Text      = "Gatekeep Options",
+                Location  = new Point(10, modePanel.Bottom + 10),
+                Width     = 320,
+                Height    = 100
+            };
+            var rbBoth = new RadioButton { Text = "Block both (default)", Location = new Point(10, 20), AutoSize = true };
+            var rbPing = new RadioButton { Text = "Block UDP ping beacon endpoints", Location = new Point(10, rbBoth.Bottom + 5), AutoSize = true };
+            var rbService = new RadioButton { Text = "Block service endpoints", Location = new Point(10, rbPing.Bottom + 5), AutoSize = true };
+            blockPanel.Controls.AddRange(new Control[] { rbBoth, rbPing, rbService });
+
+            // Initialize selections
+            rbBoth.Checked    = _blockMode == BlockMode.Both;
+            rbPing.Checked    = _blockMode == BlockMode.OnlyPing;
+            rbService.Checked = _blockMode == BlockMode.OnlyService;
+            blockPanel.Enabled = (_applyMode == ApplyMode.Gatekeep);
+
+            // Toggle blockPanel enabled state based on apply mode
+            cbApplyMode.SelectedIndexChanged += (s, e) =>
+                blockPanel.Enabled = cbApplyMode.SelectedIndex == 0;
+
+            var btnOk = new Button
+            {
+                Text            = "Apply",
+                DialogResult    = DialogResult.OK,
+                AutoSize        = true,
+                AutoSizeMode    = AutoSizeMode.GrowAndShrink,
+                Anchor          = AnchorStyles.Bottom | AnchorStyles.Right
+            };
+            // position in bottom-right with 10px padding
+            btnOk.Location = new Point(
+                dialog.ClientSize.Width - btnOk.Width - 10,
+                dialog.ClientSize.Height - btnOk.Height - 10
+            );
+
+            dialog.Controls.AddRange(new Control[] { modePanel, blockPanel, btnOk });
+            dialog.AcceptButton = btnOk;
+
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                _applyMode = cbApplyMode.SelectedIndex == 1 ? ApplyMode.UniversalRedirect : ApplyMode.Gatekeep;
+                if (_applyMode == ApplyMode.Gatekeep)
+                {
+                    if (rbBoth.Checked)       _blockMode = BlockMode.Both;
+                    else if (rbPing.Checked)  _blockMode = BlockMode.OnlyPing;
+                    else                      _blockMode = BlockMode.OnlyService;
+                }
+                SaveSettings();
+            }
         }
     }
 }
