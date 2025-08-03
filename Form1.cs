@@ -68,6 +68,7 @@ namespace MakeYourChoice
         private ApplyMode _applyMode = ApplyMode.Gatekeep;
         private enum BlockMode { Both, OnlyPing, OnlyService }
         private BlockMode _blockMode = BlockMode.Both;
+        private bool _mergeUnstable = true;
 
         // Path for saving user settings
         private static string SettingsFilePath =>
@@ -80,6 +81,7 @@ namespace MakeYourChoice
         {
             public ApplyMode ApplyMode { get; set; }
             public BlockMode BlockMode { get; set; }
+            public bool MergeUnstable { get; set; } = true;
         }
 
         private void LoadSettings()
@@ -97,12 +99,14 @@ namespace MakeYourChoice
                 {
                     _applyMode = settings.ApplyMode;
                     _blockMode = settings.BlockMode;
+                    _mergeUnstable = settings.MergeUnstable;
                 }
             }
             catch
             {
                 // ignore load errors
             }
+            UpdateRegionListViewAppearance();
         }
 
         private void SaveSettings()
@@ -115,7 +119,8 @@ namespace MakeYourChoice
                 var settings = new UserSettings
                 {
                     ApplyMode = _applyMode,
-                    BlockMode = _blockMode
+                    BlockMode = _blockMode,
+                    MergeUnstable = _mergeUnstable,
                 };
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(SettingsFilePath, json);
@@ -133,6 +138,7 @@ namespace MakeYourChoice
             StartPingTimer();
             _ = CheckForUpdatesAsync(true);
             LoadSettings();
+            UpdateRegionListViewAppearance();
         }
 
         private void InitializeComponent()
@@ -561,6 +567,57 @@ namespace MakeYourChoice
                     "drivers\\etc\\hosts");
                 File.Copy(hostsPath, hostsPath + ".bak", true);
 
+                // Determine if user selected any stable servers
+                var selectedRegions = _lv.CheckedItems.Cast<ListViewItem>()
+                                        .Select(item => (string)item.Tag)
+                                        .ToList();
+                bool anyStableSelected = selectedRegions.Any(regionKey => _regions[regionKey].Stable);
+
+                // If merge is on, ensure every selected unstable region has at least one stable alternative
+                if (_mergeUnstable && !anyStableSelected)
+                {
+                    var missing = new List<string>();
+                    foreach (var region in selectedRegions)
+                    {
+                        if (!_regions[region].Stable)
+                        {
+                            var group = GetGroupName(region);
+                            bool stableExists = _regions.Any(kv => GetGroupName(kv.Key) == group && kv.Value.Stable);
+                            if (!stableExists)
+                                missing.Add(region);
+                        }
+                    }
+                    if (missing.Count > 0)
+                    {
+                        MessageBox.Show(
+                            "Merge unstable servers option is enabled, but no stable servers found for: " +
+                            string.Join(", ", missing) + ".\nDisable merging unstable servers in the options menu or select a stable server manually.",
+                            "No Stable Servers Found",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Error);
+                        return;
+                    }
+                }
+
+                // Merge unstable servers with a stable alternative if enabled
+                var allowedSet = new HashSet<string>(selectedRegions);
+                if (_mergeUnstable && !anyStableSelected)
+                {
+                    var additional = new List<string>();
+                    foreach (var region in allowedSet.ToList())
+                    {
+                        if (!_regions[region].Stable)
+                        {
+                            var group = GetGroupName(region);
+                            var alternative = _regions.FirstOrDefault(kv => GetGroupName(kv.Key) == group && kv.Value.Stable);
+                            if (!string.IsNullOrEmpty(alternative.Key))
+                                additional.Add(alternative.Key);
+                        }
+                    }
+                    foreach (var extra in additional)
+                        allowedSet.Add(extra);
+                }
+
                 var sb = new StringBuilder();
                 sb.AppendLine("# Edited by Make Your Choice (DbD Server Selector)");
                 sb.AppendLine("# Unselected servers are blocked (Gatekeep Mode); selected servers are commented out.");
@@ -569,8 +626,8 @@ namespace MakeYourChoice
 
                 foreach (ListViewItem item in _lv.Items)
                 {
-                    bool allow = item.Checked;
                     var regionKey = (string)item.Tag;
+                    bool allow = allowedSet.Contains(regionKey);
                     var hosts = _regions[regionKey].Hosts;
                     foreach (var h in hosts)
                     {
@@ -804,9 +861,54 @@ namespace MakeYourChoice
             rbService.Checked = _blockMode == BlockMode.OnlyService;
             blockPanel.Enabled = (_applyMode == ApplyMode.Gatekeep);
 
-            // Toggle blockPanel enabled state based on apply mode
+
+            // ── Merge unstable servers panel ─────────────────────────────
+            var miscPanel = new GroupBox
+            {
+                Text = "Misc Options",
+                Width = 320,
+                Height = 50,
+                Padding = new Padding(10)
+            };
+            var cbMergeUnstable = new CheckBox
+            {
+                Location = new Point(10, 20),
+                Text = "Merge unstable servers (recommended)…",
+                AutoSize = true,
+                Checked = _mergeUnstable,
+                MaximumSize = new Size(300, 0)
+            };
+            miscPanel.Controls.Add(cbMergeUnstable);
+            var toolTipMerge = new ToolTip();
+            toolTipMerge.SetToolTip(cbMergeUnstable,
+                "Merge unstable servers with a stable alternative. (recommended)");
+            // Disable merge option when not in Gatekeep mode
+            cbMergeUnstable.Enabled = cbApplyMode.SelectedIndex == 0;
+            // Toggle blockPanel and merge checkbox enabled state based on apply mode
             cbApplyMode.SelectedIndexChanged += (s, e) =>
-                blockPanel.Enabled = cbApplyMode.SelectedIndex == 0;
+            {
+                bool isGatekeep = cbApplyMode.SelectedIndex == 0;
+                blockPanel.Enabled = isGatekeep;
+                cbMergeUnstable.Enabled = isGatekeep;
+            };
+            // Confirm before disabling merge option
+            cbMergeUnstable.CheckedChanged += (s, e) =>
+            {
+                if (!cbMergeUnstable.Checked)
+                {
+                    var message = "Disabling this option means no stable alternative will be automatically set, " +
+                                  "this will most likely cause severe latency issues. Are you sure you want to disable this?";
+                    var result = MessageBox.Show(
+                        message,
+                        "Merge Unstable Servers",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning);
+                    if (result == DialogResult.No)
+                    {
+                        cbMergeUnstable.Checked = true;
+                    }
+                }
+            };
 
             // ── Tip label for settings ────────────────────────────────────────
             var lblTipSettings = new Label
@@ -827,6 +929,20 @@ namespace MakeYourChoice
                 AutoSizeMode    = AutoSizeMode.GrowAndShrink,
                 Anchor          = AnchorStyles.Bottom | AnchorStyles.Right
             };
+            var btnDefault = new Button
+            {
+                Text            = "Default Options",
+                AutoSize        = true,
+                AutoSizeMode    = AutoSizeMode.GrowAndShrink,
+                Anchor          = AnchorStyles.Bottom | AnchorStyles.Right
+            };
+            btnDefault.Click += (s, e) =>
+            {
+                // Reset dialog controls to defaults
+                cbApplyMode.SelectedIndex = 0;
+                rbBoth.Checked = true;
+                cbMergeUnstable.Checked = true;
+            };
 
             // ── TableLayoutPanel for dynamic layout ──────────────────────────
             var tlpSettings = new TableLayoutPanel
@@ -835,8 +951,9 @@ namespace MakeYourChoice
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 ColumnCount = 1,
-                RowCount = 4,
+                RowCount = 5,
             };
+            tlpSettings.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             tlpSettings.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             tlpSettings.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             tlpSettings.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -844,8 +961,17 @@ namespace MakeYourChoice
 
             tlpSettings.Controls.Add(modePanel,       0, 0);
             tlpSettings.Controls.Add(blockPanel,      0, 1);
-            tlpSettings.Controls.Add(lblTipSettings,  0, 2);
-            tlpSettings.Controls.Add(btnOk,           0, 3);
+            tlpSettings.Controls.Add(miscPanel,      0, 2);
+            tlpSettings.Controls.Add(lblTipSettings,  0, 3);
+            var buttonPanel = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.RightToLeft,
+                AutoSize      = true,
+                Dock          = DockStyle.Fill
+            };
+            buttonPanel.Controls.Add(btnOk);
+            buttonPanel.Controls.Add(btnDefault);
+            tlpSettings.Controls.Add(buttonPanel, 0, 4);
 
             dialog.Controls.Add(tlpSettings);
             dialog.AcceptButton = btnOk;
@@ -859,7 +985,30 @@ namespace MakeYourChoice
                     else if (rbPing.Checked)  _blockMode = BlockMode.OnlyPing;
                     else                      _blockMode = BlockMode.OnlyService;
                 }
+                _mergeUnstable = cbMergeUnstable.Checked;
                 SaveSettings();
+                UpdateRegionListViewAppearance();
+            }
+        }
+
+        private void UpdateRegionListViewAppearance()
+        {
+            var defaultColor = _lv.ForeColor;
+            foreach (ListViewItem item in _lv.Items)
+            {
+                var regionKey = (string)item.Tag;
+                if (_mergeUnstable && !_regions[regionKey].Stable)
+                {
+                    item.Text = regionKey;
+                    item.ForeColor = defaultColor;
+                    item.ToolTipText = string.Empty;
+                }
+                else if (!_regions[regionKey].Stable)
+                {
+                    item.Text = regionKey + " ⚠︎";
+                    item.ForeColor = Color.Orange;
+                    item.ToolTipText = "Unstable server: latency issues may occur.";
+                }
             }
         }
     }
