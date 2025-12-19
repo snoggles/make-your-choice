@@ -19,13 +19,14 @@ namespace MakeYourChoice
 {
     public class Form1 : Form
     {
-        private const string RepoUrl    = "https://codeberg.org/ky/make-your-choice";
-        private const string WebsiteUrl = "https://kurocat.net";
+        private const string RepoUrl    = "https://github.com/laewliet/make-your-choice";
         private const string DiscordUrl = "https://discord.gg/gnvtATeVc4";
-        private const string CurrentVersion = "1.0.0-RC";
-        private const string Developer = "ky";
-        private const string Repo  = "make-your-choice";
-        private const string UpdateMessage  = "If you updated from an older version, please reset your hosts file since this version handles the hosts file differently.\n\nGo to the version menu, and select \"Reset hosts file\".";
+        private const string CurrentVersion = "2.0.0-RC"; // Must match git tag for updates, (and AssemblyInfo version, which is not yet implemented)
+        private const string Developer = "lawliet"; // GitHub username, DO NOT CHANGE, as changing this breaks the license compliance
+        private const string Repo  = "make-your-choice"; // Repository name
+        private const string UpdateMessage  = "Welcome back! Here are the new features and changes in this version:\n\n" +
+                                              "- Introduced Linux / Steam Deck version.\n" +
+                                              "Thank you for your support!";
 
         // Holds endpoint list and stability flag for each region
         private record RegionInfo(string[] Hosts, bool Stable);
@@ -79,7 +80,6 @@ namespace MakeYourChoice
         private static string SettingsFilePath =>
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "Tigerbyte",
                 "MakeYourChoice",
                 "settings.json");
 
@@ -211,11 +211,8 @@ namespace MakeYourChoice
             mOptions.DropDownItems.Add(miSettings);
 
             var mHelp     = new ToolStripMenuItem("Help");
-            var miWebsite = new ToolStripMenuItem("Website");
             var miDiscord = new ToolStripMenuItem("Discord (Get support)");
-            miWebsite.Click += (_,__) => OpenUrl(WebsiteUrl);
             miDiscord.Click += (_,__) => OpenUrl(DiscordUrl);
-            mHelp.DropDownItems.Add(miWebsite);
             mHelp.DropDownItems.Add(miDiscord);
 
             _menuStrip.Items.Add(mSource);
@@ -320,7 +317,7 @@ namespace MakeYourChoice
             {
                 using var client = new HttpClient();
                 // fetch all releases
-                var url = $"https://codeberg.org/api/v1/repos/{Developer}/{Repo}/releases";
+                var url = $"https://api.github.com/repos/{Developer}/{Repo}/releases";
                 var releases = await client.GetFromJsonAsync<List<Release>>(url);
                 if (releases == null || releases.Count == 0)
                 {
@@ -351,7 +348,7 @@ namespace MakeYourChoice
                         MessageBoxIcon.Question
                     );
                     if (resp == DialogResult.Yes)
-                        OpenUrl($"https://codeberg.org/{Developer}/{Repo}/releases");
+                        OpenUrl($"https://github.com/{Developer}/{Repo}/releases/latest");
                 }
             }
             catch (Exception ex)
@@ -797,12 +794,12 @@ namespace MakeYourChoice
 
             var lblDeveloper = new LinkLabel
             {
-                Text     = "Developer: Ky",
+                Text     = "Developer: " + Developer,
                 Font     = new Font(Font.FontFamily, 8),
                 AutoSize = true,
                 Location = new Point(10, lblTitle.Bottom + 10)
             };
-            lblDeveloper.Links.Add(11, 2, "https://kaneki.nz");
+            lblDeveloper.Links.Add(11, 2, "https://github.com/" + Developer);
             lblDeveloper.LinkClicked += (s, e) =>
             {
                 Process.Start(new ProcessStartInfo(e.Link.LinkData.ToString()) { UseShellExecute = true });
