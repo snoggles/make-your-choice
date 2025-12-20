@@ -29,7 +29,7 @@ The application needs to be run with [administrator permissions](https://learn.m
 
 The SmartScreen Alert only appears on Windows 8 and newer.  
 
-## Linux
+## Linux / SteamOS
 
 ### Linux Dependencies & Build Requirements
 - GTK4
