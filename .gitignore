@@ -3,5 +3,4 @@
 /.idea/
 /win/obj/
 /linux/target/
-/linux/Cargo.lock
 /.claude/
