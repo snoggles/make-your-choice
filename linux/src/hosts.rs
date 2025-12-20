@@ -22,16 +22,30 @@ impl HostsManager {
     }
 
     fn write_hosts(&self, content: &str) -> Result<()> {
-        // Backup current hosts
-        let _ = fs::copy(HOSTS_PATH, format!("{}.bak", HOSTS_PATH));
+        // Write to a temporary file first
+        let temp_path = "/tmp/make-your-choice-hosts.tmp";
+        fs::write(temp_path, content)
+            .context("Failed to write temporary file")?;
 
-        fs::write(HOSTS_PATH, content)
-            .with_context(|| format!("Failed to write to {}. Please run this function with sudo.", HOSTS_PATH))?;
+        // Combine all operations into a single pkexec call to avoid multiple prompts
+        let combined_command = format!(
+            "cp {} {}.bak 2>/dev/null || true && cp {} {} && (systemd-resolve --flush-caches 2>/dev/null || resolvectl flush-caches 2>/dev/null || nscd -i hosts 2>/dev/null || true)",
+            HOSTS_PATH, HOSTS_PATH, temp_path, HOSTS_PATH
+        );
 
-        // Flush DNS cache (try multiple methods for different systems)
-        let _ = Command::new("systemd-resolve").arg("--flush-caches").output();
-        let _ = Command::new("resolvectl").arg("flush-caches").output();
-        let _ = Command::new("nscd").arg("-i").arg("hosts").output();
+        let status = Command::new("pkexec")
+            .arg("sh")
+            .arg("-c")
+            .arg(&combined_command)
+            .status()
+            .context("Failed to execute pkexec")?;
+
+        // Clean up temp file
+        let _ = fs::remove_file(temp_path);
+
+        if !status.success() {
+            bail!("Failed to write to {}. Operation was cancelled or permission was denied.", HOSTS_PATH);
+        }
 
         Ok(())
     }
@@ -190,9 +204,6 @@ impl HostsManager {
 127.0.0.1        localhost
 ::1              localhost
 ";
-
-        // Backup current hosts
-        let _ = fs::copy(HOSTS_PATH, format!("{}.bak", HOSTS_PATH));
 
         self.write_hosts(default_hosts)?;
         Ok(())
