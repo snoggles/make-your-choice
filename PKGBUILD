@@ -8,7 +8,7 @@ url="https://github.com/laewliet/make-your-choice"
 license=('custom')
 depends=('gtk4' 'polkit')
 makedepends=('cargo' 'git')
-source=("git+https://github.com/laewliet/make-your-choice.git#tag=v${pkgver/_/-}")
+source=("git+https://github.com/laewliet/make-your-choice.git#tag=${pkgver/_/-}")
 sha256sums=('SKIP')
 
 prepare() {
