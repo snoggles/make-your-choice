@@ -19,7 +19,7 @@ Make Your Choice is a server region changer for Dead by Daylight. It allows you 
 Download the latest `.exe` file from the [Releases](https://github.com/laewliet/make-your-choice/releases/latest) page and run it as administrator.
 
 ### Supported Windows Versions
-- Windows 7 (SP1)
+- Windows 7
 - Windows 8 & 8.1
 - Windows 10
 - Windows 11
@@ -39,8 +39,6 @@ The SmartScreen Alert only appears on Windows 8 and newer.
 - Standard build tools (gcc, pkg-config, make)
 
 ### Arch Linux (AUR)
-> [!IMPORTANT]
-> This is still being worked on, please follow the instructions for "Other Linux Distros" for now.
 
 For Arch Linux users, install from the AUR using your preferred AUR helper:
 ```bash
