@@ -32,16 +32,16 @@ check() {
 
 package() {
     cd "$srcdir/$pkgname"
-
+    
     # Install binary
     install -Dm755 "linux/target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
-
+    
     # Install desktop file
     install -Dm644 "linux/$pkgname.desktop" "$pkgdir/usr/share/applications/$pkgname.desktop"
-
+    
     # Install icon
     install -Dm644 "linux/icon.ico" "$pkgdir/usr/share/pixmaps/$pkgname.ico"
-
+    
     # Install license
     install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
