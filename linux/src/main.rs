@@ -47,6 +47,62 @@ struct AppState {
     tokio_runtime: Arc<Runtime>,
 }
 
+fn get_color_for_latency(ms: i64) -> &'static str {
+    if ms < 0 {
+        return "gray";
+    }
+    if ms < 80 {
+        return "green";
+    }
+    if ms < 130 {
+        return "orange";
+    }
+    if ms < 250 {
+        return "crimson";
+    }
+    "purple"
+}
+
+fn refresh_warning_symbols(
+    list_store: &ListStore,
+    regions: &HashMap<String, RegionInfo>,
+    merge_unstable: bool,
+) {
+    if let Some(iter) = list_store.iter_first() {
+        loop {
+            let is_divider = list_store.get::<bool>(&iter, 4);
+
+            // Skip dividers
+            if !is_divider {
+                let name = list_store.get::<String>(&iter, 0);
+                let clean_name = name.replace(" ⚠︎", "");
+
+                if let Some(region_info) = regions.get(&clean_name) {
+                    // Update display name based on merge_unstable setting
+                    let display_name = if !region_info.stable && !merge_unstable {
+                        format!("{} ⚠︎", clean_name)
+                    } else {
+                        clean_name
+                    };
+
+                    // Update tooltip based on merge_unstable setting
+                    let tooltip = if !region_info.stable && !merge_unstable {
+                        "Unstable: issues may occur.".to_string()
+                    } else {
+                        String::new()
+                    };
+
+                    list_store.set(&iter, &[(0, &display_name), (6, &tooltip)]);
+                }
+            }
+
+            if !list_store.iter_next(&iter) {
+                break;
+            }
+        }
+    }
+}
+
 fn main() -> glib::ExitCode {
     // Prevent running as root
     if is_running_as_root() {
@@ -72,11 +128,16 @@ fn build_ui(app: &Application) {
     // Load configuration
     let config = AppConfig {
         repo_url: "https://github.com/laewliet/make-your-choice".to_string(),
-        current_version: "2.0.0-RC".to_string(), // Must match git tag for updates, and Cargo.toml version
+        current_version: "2.1.0".to_string(), // Must match git tag for updates, and Cargo.toml version
         developer: "laewliet".to_string(), // GitHub username, DO NOT CHANGE, as changing this breaks the license compliance
         repo: "make-your-choice".to_string(), // Repository name
-        update_message: "Welcome back! Here are the new features and changes in this version:\n\n- Introduced Linux / Steam Deck version.\nThank you for your support!".to_string(),
-        discord_url: "https://discord.gg/gnvtATeVc4".to_string(),
+        update_message: "Welcome back! Here are the new features and changes in this version:\n\n\
+                        - Added color coded latency on Linux.\n\
+                        - Improved \"About\" dialog menu.\n\
+                        - Fixed the Discord invite link. (fr)\n\
+                        - Fixed a bug where the *unstable* warning would show at all times on Linux.\n\n\
+                        Thank you for your support!".to_string(),
+        discord_url: "https://discord.gg/xEMyAA8gn8".to_string(),
     };
 
     let regions = get_regions();
@@ -110,13 +171,15 @@ fn build_ui(app: &Application) {
         }
     }
 
-    // Create ListStore for the list view (region name, latency, stable, checked, is_divider)
+    // Create ListStore for the list view (region name, latency, stable, checked, is_divider, latency_color, tooltip)
     let list_store = ListStore::new(&[
         Type::STRING,
         Type::STRING,
         Type::BOOL,
         Type::BOOL,
         Type::BOOL,
+        Type::STRING, // latency foreground color
+        Type::STRING, // tooltip text
     ]);
 
     // Group regions by category
@@ -138,6 +201,9 @@ fn build_ui(app: &Application) {
         ("China", "Mainland China"),
     ];
 
+    // Check merge_unstable setting to determine if we show warning symbols
+    let merge_unstable = settings.lock().unwrap().merge_unstable;
+
     // Populate list store with dividers and regions
     for (group_key, group_label) in group_order.iter() {
         if let Some(group_regions) = groups.get(group_key) {
@@ -151,16 +217,27 @@ fn build_ui(app: &Application) {
                     (2, &true),
                     (3, &false),
                     (4, &true), // is_divider flag
+                    (5, &"black".to_string()), // default color for dividers (not displayed anyway)
+                    (6, &String::new()), // no tooltip for dividers
                 ],
             );
 
             // Add regions in this group
             for (region_name, region_info) in group_regions {
-                let display_name = if !region_info.stable {
+                // Only show warning symbol if merge_unstable is disabled and server is unstable
+                let display_name = if !region_info.stable && !merge_unstable {
                     format!("{} ⚠︎", region_name)
                 } else {
                     (*region_name).clone()
                 };
+
+                // Set tooltip for unstable servers when merge_unstable is disabled
+                let tooltip = if !region_info.stable && !merge_unstable {
+                    "Unstable: issues may occur.".to_string()
+                } else {
+                    String::new()
+                };
+
                 let iter = list_store.append();
                 list_store.set(
                     &iter,
@@ -170,6 +247,8 @@ fn build_ui(app: &Application) {
                         (2, &region_info.stable),
                         (3, &false), // checked
                         (4, &false), // not a divider
+                        (5, &"gray".to_string()), // initial color
+                        (6, &tooltip), // tooltip text
                     ],
                 );
             }
@@ -181,6 +260,23 @@ fn build_ui(app: &Application) {
     tree_view.set_headers_visible(true);
     tree_view.set_enable_search(false);
     tree_view.selection().set_mode(SelectionMode::None);
+    tree_view.set_has_tooltip(true);
+
+    // Set up tooltip handler
+    tree_view.connect_query_tooltip(|tree_view, x, y, _keyboard_mode, tooltip| {
+        if let Some((Some(path), _column, _cell_x, _cell_y)) = tree_view.path_at_pos(x, y) {
+            if let Some(model) = tree_view.model() {
+                if let Some(iter) = model.iter(&path) {
+                    let tooltip_text = model.get::<String>(&iter, 6);
+                    if !tooltip_text.is_empty() {
+                        tooltip.set_text(Some(&tooltip_text));
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    });
 
     // Add columns
     let col_server = TreeViewColumn::new();
@@ -234,6 +330,7 @@ fn build_ui(app: &Application) {
     cell_latency.set_property("style", pango::Style::Italic);
     col_latency.pack_start(&cell_latency, true);
     col_latency.add_attribute(&cell_latency, "text", 1);
+    col_latency.add_attribute(&cell_latency, "foreground", 5); // Use color from column 5
     tree_view.append_column(&col_latency);
 
     // Create scrolled window for tree view
@@ -453,9 +550,14 @@ fn setup_menu_actions(app: &Application, window: &ApplicationWindow, app_state: 
     });
     app.add_action(&action);
 
-    // Open hosts location action (disabled for future implementation)
+    // Open hosts location action
     let action = SimpleAction::new("open-hosts", None);
-    action.set_enabled(false);
+    action.connect_activate(move |_, _| {
+        // Open /etc directory in file manager
+        let _ = std::process::Command::new("xdg-open")
+            .arg("/etc")
+            .spawn();
+    });
     app.add_action(&action);
 
     // Reset hosts action
@@ -589,18 +691,35 @@ fn show_about_dialog(app_state: &Rc<AppState>, window: &ApplicationWindow) {
     );
     dialog.set_default_width(480);
 
+    // Add margin to the button area
+    if let Some(action_area) = dialog.child().and_then(|c| c.last_child()) {
+        action_area.set_margin_start(15);
+        action_area.set_margin_end(15);
+        action_area.set_margin_top(10);
+        action_area.set_margin_bottom(15);
+    }
+
     let content = dialog.content_area();
     let vbox = GtkBox::new(Orientation::Vertical, 10);
-    vbox.set_margin_start(10);
-    vbox.set_margin_end(10);
-    vbox.set_margin_top(10);
-    vbox.set_margin_bottom(10);
+    vbox.set_margin_start(20);
+    vbox.set_margin_end(20);
+    vbox.set_margin_top(20);
+    vbox.set_margin_bottom(20);
 
     let title = Label::new(Some("Make Your Choice (DbD Server Selector)"));
     title.add_css_class("title-2");
 
-    let developer = Label::new(Some(&format!("Developer: {}", app_state.config.developer)));
-    developer.set_halign(gtk4::Align::Start);
+    // Developer label. This must always refer to the original developer. Changing this breaks license compliance.
+    let developer_box = GtkBox::new(Orientation::Horizontal, 5);
+    developer_box.set_halign(gtk4::Align::Start);
+    let developer_label = Label::new(Some("Developer: "));
+    let developer_link = gtk4::LinkButton::with_label(
+        &format!("https://github.com/{}", app_state.config.developer),
+        &app_state.config.developer,
+    );
+    developer_link.set_halign(gtk4::Align::Start);
+    developer_box.append(&developer_label);
+    developer_box.append(&developer_link);
 
     let version = Label::new(Some(&format!(
         "Version {}\nLinux (GTK4)",
@@ -608,9 +727,28 @@ fn show_about_dialog(app_state: &Rc<AppState>, window: &ApplicationWindow) {
     )));
     version.set_halign(gtk4::Align::Start);
 
+    // Copyright notice
+    let copyright = Label::new(Some("Copyright © 2025"));
+    copyright.set_halign(gtk4::Align::Start);
+
+    // License information
+    let license = Label::new(Some(
+        "This program is free software licensed\n\
+        under the terms of the GNU General Public License.\n\
+        This program is distributed in the hope that it will be useful, but\n\
+        without any warranty. See the GNU General Public License\n\
+        for more details."
+    ));
+    license.set_halign(gtk4::Align::Start);
+    license.set_wrap(true);
+    license.set_max_width_chars(60);
+
     vbox.append(&title);
-    vbox.append(&developer);
+    vbox.append(&developer_box);
     vbox.append(&version);
+    vbox.append(&Separator::new(Orientation::Horizontal));
+    vbox.append(&copyright);
+    vbox.append(&license);
     content.append(&vbox);
 
     dialog.run_async(|dialog, _| dialog.close());
@@ -717,18 +855,26 @@ fn show_settings_dialog(app_state: &Rc<AppState>, parent: &ApplicationWindow) {
         Some(parent),
         gtk4::DialogFlags::MODAL,
         &[
-            ("Apply Changes", ResponseType::Ok),
-            ("Cancel", ResponseType::Cancel),
+            ("Revert to Default", ResponseType::Other(1)),
+            ("Apply", ResponseType::Ok),
         ],
     );
     dialog.set_default_width(350);
 
+    // Add margin to the button area and style buttons
+    if let Some(action_area) = dialog.child().and_then(|c| c.last_child()) {
+        action_area.set_margin_start(15);
+        action_area.set_margin_end(15);
+        action_area.set_margin_top(10);
+        action_area.set_margin_bottom(15);
+    }
+
     let content = dialog.content_area();
     let settings_box = GtkBox::new(Orientation::Vertical, 10);
-    settings_box.set_margin_start(10);
-    settings_box.set_margin_end(10);
-    settings_box.set_margin_top(10);
-    settings_box.set_margin_bottom(10);
+    settings_box.set_margin_start(15);
+    settings_box.set_margin_end(15);
+    settings_box.set_margin_top(15);
+    settings_box.set_margin_bottom(15);
 
     // Apply mode
     let mode_label = Label::new(Some("Method:"));
@@ -781,6 +927,7 @@ fn show_settings_dialog(app_state: &Rc<AppState>, parent: &ApplicationWindow) {
     let app_state_clone = app_state.clone();
     dialog.connect_response(move |dialog, response| {
         if response == ResponseType::Ok {
+            // Apply button clicked
             let mut settings = app_state_clone.settings.lock().unwrap();
 
             settings.apply_mode = match mode_combo.active() {
@@ -799,8 +946,43 @@ fn show_settings_dialog(app_state: &Rc<AppState>, parent: &ApplicationWindow) {
             settings.merge_unstable = merge_check.is_active();
 
             let _ = settings.save();
+
+            // Refresh the warning symbols in the list view
+            refresh_warning_symbols(
+                &app_state_clone.list_store,
+                &app_state_clone.regions,
+                settings.merge_unstable,
+            );
+
+            dialog.close();
+        } else if response == ResponseType::Other(1) {
+            // Revert to Default button clicked
+            let mut settings = app_state_clone.settings.lock().unwrap();
+
+            // Reset to default values
+            settings.apply_mode = ApplyMode::Gatekeep;
+            settings.block_mode = BlockMode::Both;
+            settings.merge_unstable = true;
+
+            let _ = settings.save();
+
+            // Update UI controls to reflect defaults
+            mode_combo.set_active(Some(0));
+            rb_both.set_active(true);
+            merge_check.set_active(true);
+
+            // Refresh the warning symbols in the list view
+            refresh_warning_symbols(
+                &app_state_clone.list_store,
+                &app_state_clone.regions,
+                settings.merge_unstable,
+            );
+
+            // Don't close dialog - let user see the changes
+        } else {
+            // X button or other close action
+            dialog.close();
         }
-        dialog.close();
     });
 
     dialog.show();
@@ -871,7 +1053,8 @@ fn start_ping_timer(app_state: Rc<AppState>) {
                             } else {
                                 "disconnected".to_string()
                             };
-                            list_store.set(&iter, &[(1, &latency_text)]);
+                            let color = get_color_for_latency(latency);
+                            list_store.set(&iter, &[(1, &latency_text), (5, &color.to_string())]);
                         }
                     }
 
