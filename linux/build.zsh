@@ -37,10 +37,10 @@ if [ $? -eq 0 ]; then
     echo "Binary location:"
     echo "   ./target/release/make-your-choice"
     echo ""
-    echo "To run the application:"
-    echo "   sudo ./target/release/make-your-choice"
+    echo "To run the program:"
+    echo "   ./target/release/make-your-choice"
     echo ""
-    echo "Note: The application requires sudo/root privileges to modify /etc/hosts"
+    echo "Note: Do NOT run the program using sudo, or as root."
 else
     echo ""
     echo "❌ Build failed!"
