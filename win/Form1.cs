@@ -16,6 +16,7 @@ using System.Linq;
 using System.Reflection;
 using Svg;
 using YamlDotNet.Serialization;
+using System.Runtime.InteropServices;
 
 namespace MakeYourChoice
 {
@@ -227,6 +228,7 @@ namespace MakeYourChoice
                 SaveSettings();
             }
             UpdateRegionListViewAppearance();
+            ApplyDarkThemeRefinements(this);
         }
 
         private async Task FetchGitIdentityAsync()
@@ -1534,6 +1536,7 @@ namespace MakeYourChoice
             about.Controls.Add(lblLicense);
             about.Controls.Add(btnOk);
             about.AcceptButton = btnOk;
+            ApplyDarkThemeRefinements(about);
             about.ShowDialog(this);
         }
         private void ShowSettingsDialog()
@@ -1798,6 +1801,8 @@ namespace MakeYourChoice
                 SaveSettings();
                 UpdateRegionListViewAppearance();
             }
+            ApplyDarkThemeRefinements(dialog);
+            dialog.ShowDialog(this);
         }
 
         private void UpdateRegionListViewAppearance()
@@ -1899,6 +1904,38 @@ namespace MakeYourChoice
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error
                 );
+            }
+        }
+
+        [DllImport("uxtheme.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, string pszSubIdList);
+
+        private void ApplyDarkThemeRefinements(Control container)
+        {
+            foreach (Control c in container.Controls)
+            {
+                if (c is Button btn)
+                {
+                    btn.FlatStyle = FlatStyle.Flat;
+                }
+                else if (c is ListView lv)
+                {
+                    // Force Explorer theme for better dark mode headers/checkboxes
+                    SetWindowTheme(lv.Handle, "Explorer", null);
+                }
+                else if (c is CheckBox cb)
+                {
+                    cb.FlatStyle = FlatStyle.Flat;
+                }
+                else if (c is RadioButton rb)
+                {
+                    rb.FlatStyle = FlatStyle.Flat;
+                }
+
+                if (c.HasChildren)
+                {
+                    ApplyDarkThemeRefinements(c);
+                }
             }
         }
     }
