@@ -2,10 +2,18 @@ use anyhow::{Context, Result, bail};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
-use crate::region::{BlockMode, RegionInfo, get_group_name};
+use crate::logic::region::{BlockMode, RegionInfo, get_group_name};
 
 const SECTION_MARKER: &str = "# --+ Make Your Choice +--";
+
+#[cfg(unix)]
 const HOSTS_PATH: &str = "/etc/hosts";
+
+#[cfg(windows)]
+fn get_hosts_path() -> String {
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    format!("{}\\System32\\drivers\\etc\\hosts", system_root)
+}
 
 pub struct HostsManager {
     discord_url: String,
@@ -17,34 +25,65 @@ impl HostsManager {
     }
 
     fn read_hosts(&self) -> Result<String> {
-        fs::read_to_string(HOSTS_PATH)
+        #[cfg(unix)]
+        let path = HOSTS_PATH;
+        #[cfg(windows)]
+        let path = get_hosts_path();
+
+        fs::read_to_string(&path)
             .or_else(|_| Ok(String::new()))
     }
 
     fn write_hosts(&self, content: &str) -> Result<()> {
-        // Write to a temporary file first
-        let temp_path = "/tmp/make-your-choice-hosts.tmp";
-        fs::write(temp_path, content)
-            .context("Failed to write temporary file")?;
+        #[cfg(unix)]
+        {
+            // Write to a temporary file first
+            let temp_path = "/tmp/make-your-choice-hosts.tmp";
+            fs::write(temp_path, content)
+                .context("Failed to write temporary file")?;
 
-        // Combine all operations into a single pkexec call to avoid multiple prompts
-        let combined_command = format!(
-            "cp {} {}.bak 2>/dev/null || true && cp {} {} && (systemd-resolve --flush-caches 2>/dev/null || resolvectl flush-caches 2>/dev/null || nscd -i hosts 2>/dev/null || true)",
-            HOSTS_PATH, HOSTS_PATH, temp_path, HOSTS_PATH
-        );
+            // Combine all operations into a single pkexec call to avoid multiple prompts
+            let combined_command = format!(
+                "cp {} {}.bak 2>/dev/null || true && cp {} {} && (systemd-resolve --flush-caches 2>/dev/null || resolvectl flush-caches 2>/dev/null || nscd -i hosts 2>/dev/null || true)",
+                HOSTS_PATH, HOSTS_PATH, temp_path, HOSTS_PATH
+            );
 
-        let status = Command::new("pkexec")
-            .arg("sh")
-            .arg("-c")
-            .arg(&combined_command)
-            .status()
-            .context("Failed to execute pkexec")?;
+            let status = Command::new("pkexec")
+                .arg("sh")
+                .arg("-c")
+                .arg(&combined_command)
+                .status()
+                .context("Failed to execute pkexec")?;
 
-        // Clean up temp file
-        let _ = fs::remove_file(temp_path);
+            // Clean up temp file
+            let _ = fs::remove_file(temp_path);
 
-        if !status.success() {
-            bail!("Failed to write to {}. Operation was cancelled or permission was denied.", HOSTS_PATH);
+            if !status.success() {
+                bail!("Failed to write to {}. Operation was cancelled or permission was denied.", HOSTS_PATH);
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            let path = get_hosts_path();
+            let bak_path = format!("{}.bak", path);
+            
+            // Try to backup first
+            let _ = fs::copy(&path, &bak_path);
+
+            // Since the app now requires elevation via manifest, we can write directly.
+            fs::write(&path, content)
+                .context(format!("Failed to write to {}. Enclose you are running as Administrator.", path))?;
+            
+            // Flush DNS cache
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let _ = Command::new("ipconfig")
+                    .arg("/flushdns")
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                    .status();
+            }
         }
 
         Ok(())
@@ -199,10 +238,34 @@ impl HostsManager {
     }
 
     pub fn restore_default(&self) -> Result<()> {
+        #[cfg(unix)]
         let default_hosts = "# Static table lookup for hostnames.
 # See hosts(5) for details.
 127.0.0.1        localhost
 ::1              localhost
+";
+        #[cfg(windows)]
+        let default_hosts = "# Copyright (c) 1993-2009 Microsoft Corp.
+#
+# This is a sample HOSTS file used by Microsoft TCP/IP for Windows.
+#
+# This file contains the mappings of IP addresses to host names. Each
+# entry should be kept on an individual line. The IP address should
+# be placed in the first column followed by the corresponding host name.
+# The IP address and the host name should be separated by at least one
+# space.
+#
+# Additionally, comments (such as these) may be inserted on individual
+# lines or following the machine name denoted by a '#' symbol.
+#
+# For example:
+#
+#      102.54.94.97     rhino.acme.com          # source server
+#       38.25.63.10     x.acme.com              # x client host
+
+# localhost name resolution is handled within DNS itself.
+#	127.0.0.1       localhost
+#	::1             localhost
 ";
 
         self.write_hosts(default_hosts)?;

@@ -1,4 +1,4 @@
-use crate::region::{ApplyMode, BlockMode};
+use crate::logic::region::{ApplyMode, BlockMode};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -27,7 +27,7 @@ impl UserSettings {
     pub fn config_dir() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("make-your-choice")
+            .join("MakeYourChoice") // Use same name as Windows version
     }
 
     pub fn config_file() -> PathBuf {

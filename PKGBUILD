@@ -1,4 +1,4 @@
-# Maintainer: lawliet <https://github.com/laewliet>
+# Maintainer: laewliet <https://github.com/laewliet>
 pkgname=make-your-choice
 pkgver=2.2.0
 pkgrel=1

@@ -1,0 +1,141 @@
+import {
+    Button,
+    CheckBox,
+    ListView,
+    ScrollView,
+    StandardListView,
+} from "std-widgets.slint";
+
+export struct ServerEntry {
+    name: string,
+    latency: string,
+    latency_color: color,
+    checked: bool,
+    is_group: bool,
+    is_stable: bool,
+}
+
+export component MainWindow inherits Window {
+    title: "Make Your Choice (DbD Server Selector)";
+    min-width: 400px;
+    min-height: 600px;
+    in property <[ServerEntry]> servers: [];
+    in property <string> version: "v3.0.0";
+    in property <string> tip: "Tip: You can select multiple servers. The game will decide which one to use based on latency.";
+    in property <bool> is_dark: false;
+    in property <string> developer: "";
+    callback apply_clicked();
+    callback revert_clicked();
+    callback check_updates_clicked();
+    callback repo_clicked();
+    callback about_clicked();
+    callback discord_clicked();
+    callback toggle_server(int);
+    VerticalLayout {
+        padding: 10px;
+        spacing: 10px;
+
+        // Top Header/Menu Area
+        HorizontalLayout {
+            height: 30px;
+            spacing: 10px;
+            Button {
+                text: root.version;
+                clicked => {
+                    root.check_updates_clicked();
+                }
+            }
+
+            Button {
+                text: "Repository";
+                clicked => {
+                    root.repo_clicked();
+                }
+            }
+
+            Button {
+                text: "Discord";
+                clicked => {
+                    root.discord_clicked();
+                }
+            }
+        }
+
+        Rectangle {
+            background: root.is_dark ? #333 : @linear-gradient(180deg, #f0f0f0 0%, #e0e0e0 100%);
+            border-radius: 4px;
+            height: 40px;
+            HorizontalLayout {
+                padding: 5px;
+                Text {
+                    text: root.tip;
+                    wrap: word-wrap;
+                    font-size: 11px;
+                    color: root.is_dark ? #eee : #333;
+                }
+            }
+        }
+
+
+        // Custom ListView implementation for better control
+        Rectangle {
+            border-width: 1px;
+            border-color: root.is_dark ? #444 : #ccc;
+            background: root.is_dark ? #222 : #fff;
+            ScrollView {
+                VerticalLayout {
+                    for entry[i] in servers: Rectangle {
+                        height: 30px;
+                        background: entry.is_group ? (root.is_dark ? #333 : #eee) : transparent;
+                        HorizontalLayout {
+                            padding_left: 10px;
+                            padding_right: 10px;
+                            spacing: 12px;
+                            alignment: start;
+                            if !entry.is_group: CheckBox {
+                                checked: entry.checked;
+                                toggled => {
+                                    root.toggle_server(i);
+                                }
+                            }
+                            Text {
+                                text: entry.name;
+                                font-weight: entry.is_group ? 700 : 400;
+                                color: entry.is_group ? (root.is_dark ? #fff : #333) : (entry.checked ? (root.is_dark ? #fff : #000) : (root.is_dark ? #aaa : #666));
+                                horizontal-alignment: left;
+                                horizontal-stretch: 1;
+                            }
+
+                            if !entry.is_group: Text {
+                                text: entry.latency;
+                                color: entry.latency_color;
+                                font-italic: true;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: end;
+            spacing: 10px;
+            Button {
+                text: "Revert to Default";
+                clicked => {
+                    root.revert_clicked();
+                }
+            }
+
+            Button {
+                text: "Apply Selection";
+                primary: true;
+                clicked => {
+                    root.apply_clicked();
+                }
+            }
+        }
+    }
+}
