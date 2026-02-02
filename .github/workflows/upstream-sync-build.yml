@@ -1,0 +1,170 @@
+name: Upstream Sync and Darkmode Build
+
+on:
+  schedule:
+    - cron: "0 */6 * * *" # Every 6 hours
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*-darkmode"
+
+jobs:
+  sync:
+    name: Sync Upstream and Tag
+    runs-on: ubuntu-latest
+    if: github.event_name != 'push'
+    outputs:
+      new_tag: ${{ steps.sync.outputs.new_tag }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync and Rebase
+        id: sync
+        run: |
+          git remote add upstream https://github.com/laewliet/make-your-choice.git
+          git fetch upstream --tags
+          git fetch origin --tags
+
+          git checkout main
+
+          # Find the latest upstream version tag
+          LATEST_TAG=$(git tag -l "v*" --sort=-v:refname | grep -E '^v[0-9]+(\.[0-9]+)*$' | head -n 1)
+
+          if [[ -z "$LATEST_TAG" ]]; then
+            echo "No upstream tags found."
+            exit 0
+          fi
+
+          DARKMODE_TAG="${LATEST_TAG}-darkmode"
+
+          # Check if the darkmode version already exists globally
+          if git rev-parse "$DARKMODE_TAG" >/dev/null 2>&1; then
+            echo "Latest tag $LATEST_TAG already has a darkmode version ($DARKMODE_TAG). Skipping rebase."
+          else
+            echo ">>> Processing latest tag: $LATEST_TAG (creating $DARKMODE_TAG)"
+            
+            # Rebase onto the specific latest tag
+            git rebase "$LATEST_TAG"
+            
+            echo ">>> Tagging $DARKMODE_TAG at $(git rev-parse HEAD)"
+            git tag -f "$DARKMODE_TAG"
+            
+            # Push rebased main and the new tag
+            git push origin main --force
+            git push origin "$DARKMODE_TAG" --force
+            
+            # Output the tag name for the build job
+            echo "new_tag=$DARKMODE_TAG" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    name: Build and Release Windows
+    runs-on: windows-latest
+    needs: [sync]
+    if: |
+      always() &&
+      (startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-darkmode')) ||
+      (needs.sync.outputs.new_tag != '')
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+    steps:
+      - name: Resolve Tag Name
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG_NAME="${{ github.ref_name }}"
+          else
+            TAG_NAME="${{ needs.sync.outputs.new_tag }}"
+          fi
+          BASE_TAG="${TAG_NAME%-darkmode}"
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "base_tag=$BASE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.vars.outputs.tag }}
+
+      - name: Fetch Upstream Release Notes
+        id: notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BASE_TAG="${{ steps.vars.outputs.base_tag }}"
+          UPSTREAM_REPO="laewliet/make-your-choice"
+
+          echo "### Derived Build of Upstream [$BASE_TAG](https://github.com/$UPSTREAM_REPO/releases/tag/$BASE_TAG)" > release_body.md
+          echo "This is a derived build of the upstream release, modified with darkmode." >> release_body.md
+          echo "" >> release_body.md
+          echo "---" >> release_body.md
+          echo "" >> release_body.md
+          echo "#### Upstream Release Notes:" >> release_body.md
+          echo "" >> release_body.md
+
+          # Fetch body from upstream release
+          UPSTREAM_BODY=$(gh release view "$BASE_TAG" --repo "$UPSTREAM_REPO" --json body -q .body 2>/dev/null || echo "No upstream release notes found.")
+          echo "$UPSTREAM_BODY" >> release_body.md
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cd win
+          ./build.ps1
+
+      - name: Generate SBOM
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://github.com/microsoft/sbom-tool/releases/latest/download/sbom-tool-win-x64.exe -OutFile sbom-tool.exe
+          mkdir _manifest
+          ./sbom-tool.exe generate -b win/bin/Release/net10.0-windows/win-x64/publish -bc win -pn MakeYourChoice -pv ${{ steps.vars.outputs.tag }} -ps Snoggles -nsb https://github.com/snoggles/make-your-choice -m _manifest
+
+          # Dynamically find the manifest file as its exact path can vary by tool version
+          $sbomFile = Get-ChildItem -Path _manifest -Filter "manifest.spdx.json" -Recurse | Select-Object -First 1
+          if ($sbomFile) {
+            Write-Host "✅ Found SBOM at $($sbomFile.FullName)" -ForegroundColor Green
+            Move-Item $sbomFile.FullName ./MakeYourChoice.sbom.json
+          } else {
+            Write-Host "❌ SBOM manifest not found in _manifest directory!" -ForegroundColor Red
+            Get-ChildItem -Path _manifest -Recurse
+            exit 1
+          }
+
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            win/bin/Release/net10.0-windows/win-x64/publish/MakeYourChoice.exe
+            MakeYourChoice.sbom.json
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            win/bin/Release/net10.0-windows/win-x64/publish/MakeYourChoice.exe
+          name: Release ${{ steps.vars.outputs.tag }}
+          tag_name: ${{ steps.vars.outputs.tag }}
+          body_path: release_body.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
