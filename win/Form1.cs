@@ -50,10 +50,11 @@ namespace MakeYourChoice
 
         private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
         private const int LVM_GETHEADER = 0x101F;
+        private const int WM_SETREDRAW = 0x000B;
 
         private const string DiscordUrl = "https://discord.gg/xEMyAA8gn8";
-        private const string Repo = "make-your-choice"; // Repository name
-        private string Developer; // Fetched from API
+        private const string Repo = "make-your-choice";
+        private string Developer;
         private string RepoUrl => Developer != null ? $"https://github.com/{Developer}/{Repo}" : null;
         private static readonly string CurrentVersion;
         private static readonly string UpdateMessage;
@@ -80,6 +81,7 @@ namespace MakeYourChoice
 
                 using (var stream = assembly.GetManifestResourceStream(resourceName))
                 {
+                    if (stream == null) return ("?.?.?", "Version info not found.");
                     using (var reader = new StreamReader(stream))
                     {
                         var yaml = reader.ReadToEnd();
@@ -96,12 +98,12 @@ namespace MakeYourChoice
                     }
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                // Return error details for debugging
-                return ("v0.0.0", $"Failed to get version info: {ex.Message}");
+                return ("?.?.?", "Error loading version info.");
             }
         }
+
 
         // Holds endpoint list and stability flag for each region
         private record RegionInfo(string[] Hosts, bool Stable);
@@ -148,7 +150,7 @@ namespace MakeYourChoice
 
         private MenuStrip _menuStrip;
         private Label _lblTip;
-        private ListView _lv;
+        private DataGridView _dgv;
         private FlowLayoutPanel _buttonPanel;
         private Button _btnApply;
         private Button _btnRevert;
@@ -218,7 +220,7 @@ namespace MakeYourChoice
             }
             // Apply theme after loading
             ApplyTheme();
-            UpdateRegionListViewAppearance();
+            UpdateRegionDataGridViewAppearance();
         }
 
         private void SaveSettings()
@@ -284,9 +286,15 @@ namespace MakeYourChoice
                 {
                     btn.FlatStyle = _darkMode ? FlatStyle.Flat : FlatStyle.Standard;
                 }
-                else if (c is ListView lv)
+                else if (c is DataGridView dgv)
                 {
-                    SetWindowTheme(lv.Handle, "Explorer", null);
+                    dgv.BackgroundColor = _darkMode ? Color.FromArgb(30, 30, 30) : Color.White;
+                    dgv.DefaultCellStyle.BackColor = _darkMode ? Color.FromArgb(30, 30, 30) : Color.White;
+                    dgv.DefaultCellStyle.ForeColor = _darkMode ? Color.White : Color.Black;
+                    dgv.ColumnHeadersDefaultCellStyle.BackColor = _darkMode ? Color.FromArgb(45, 45, 48) : Color.FromArgb(230, 230, 230);
+                    dgv.ColumnHeadersDefaultCellStyle.ForeColor = _darkMode ? Color.White : Color.Black;
+                    dgv.EnableHeadersVisualStyles = false;
+                    dgv.GridColor = _darkMode ? Color.FromArgb(60, 60, 60) : Color.FromArgb(230, 230, 230);
                 }
                 else if (c is CheckBox cb)
                 {
@@ -324,7 +332,7 @@ namespace MakeYourChoice
                 _autoUpdateCheckPausedUntil = null;
                 SaveSettings();
             }
-            UpdateRegionListViewAppearance();
+            UpdateRegionDataGridViewAppearance();
         }
 
         private async Task FetchGitIdentityAsync()
@@ -464,51 +472,94 @@ namespace MakeYourChoice
                 Margin = new Padding(0, 0, 0, 10)
             };
 
-            // ── ListView ─────────────────────────────────────────────────
-            _lv = new ListView
+            // ── DataGridView ─────────────────────────────────────────────
+            _dgv = new DataGridView
             {
-                View = View.Details,
-                CheckBoxes = true,
-                FullRowSelect = true,
-                ShowGroups = true,
-                Dock = DockStyle.Fill
+                Dock = DockStyle.Fill,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AllowUserToResizeRows = false,
+                RowHeadersVisible = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = false,
+                BackgroundColor = Color.White,
+                BorderStyle = BorderStyle.Fixed3D,
+                ReadOnly = false
             };
-            _lv.ShowItemToolTips = true;
+            _dgv.AutoGenerateColumns = false;
+
             // Enable double buffering to reduce flicker
-            typeof(ListView).InvokeMember(
+            typeof(DataGridView).InvokeMember(
                 "DoubleBuffered",
                 BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.SetProperty,
                 null,
-                _lv,
+                _dgv,
                 new object[] { true }
             );
-            _lv.Columns.Add("Server", 220);
-            _lv.Columns.Add("Latency", 115);
-            var grpEurope = new ListViewGroup("Europe", HorizontalAlignment.Left) { Name = "Europe" };
-            var grpAmericas = new ListViewGroup("The Americas", HorizontalAlignment.Left) { Name = "Americas" };
-            var grpAsia = new ListViewGroup("Asia (Excl. Cn)", HorizontalAlignment.Left) { Name = "Asia" };
-            var grpOceania = new ListViewGroup("Oceania", HorizontalAlignment.Left) { Name = "Oceania" };
-            var grpChina = new ListViewGroup("Mainland China", HorizontalAlignment.Left) { Name = "China" };
-            _lv.Groups.AddRange(new[] { grpEurope, grpAmericas, grpAsia, grpOceania, grpChina });
-            foreach (var kv in _regions)
+
+            var colCheck = new DataGridViewCheckBoxColumn
             {
-                var regionKey = kv.Key;
-                var displayName = regionKey + (kv.Value.Stable ? string.Empty : " ⚠︎");
-                var item = new ListViewItem(displayName)
+                Name = "ColCheck",
+                HeaderText = "",
+                Width = 30,
+                Resizable = DataGridViewTriState.False
+            };
+            var colServer = new DataGridViewTextBoxColumn
+            {
+                Name = "ColServer",
+                HeaderText = "Server",
+                Width = 220,
+                ReadOnly = true
+            };
+            var colLatency = new DataGridViewTextBoxColumn
+            {
+                Name = "ColLatency",
+                HeaderText = "Latency",
+                Width = 115,
+                ReadOnly = true
+            };
+
+            _dgv.Columns.AddRange(colCheck, colServer, colLatency);
+
+            _dgv.CellContentClick += (s, e) =>
+            {
+                if (e.ColumnIndex == 0 && e.RowIndex >= 0)
                 {
-                    Tag = regionKey,
-                    Group = _lv.Groups[GetGroupName(regionKey)],
-                    Checked = false,
-                    UseItemStyleForSubItems = false
-                };
-                if (!kv.Value.Stable)
-                {
-                    item.ForeColor = Color.Orange;
-                    item.ToolTipText = "Unstable: issues may occur.";
+                    var row = _dgv.Rows[e.RowIndex];
+                    if (row.Tag is string tag && tag == "[HEADER]")
+                    {
+                        // Prevent checking headers
+                        return;
+                    }
+                    _dgv.EndEdit();
                 }
-                item.SubItems.Add("…");
-                _lv.Items.Add(item);
-            }
+            };
+
+            _dgv.CellFormatting += (s, e) =>
+            {
+                if (e.RowIndex >= 0)
+                {
+                    var row = _dgv.Rows[e.RowIndex];
+                    if (row.Tag is string tag && tag == "[HEADER]")
+                    {
+                        if (e.ColumnIndex == 0) e.Value = null; // Hide checkbox value
+                    }
+                }
+            };
+
+            _dgv.CellPainting += (s, e) =>
+            {
+                if (e.RowIndex >= 0 && _dgv.Rows[e.RowIndex].Tag as string == "[HEADER]")
+                {
+                    if (e.ColumnIndex == 0)
+                    {
+                        e.PaintBackground(e.CellBounds, true);
+                        e.Handled = true; // Don't paint checkbox
+                    }
+                }
+            };
+
+            PopulateDataGridView();
 
             // ── Buttons ─────────────────────────────────────────────────
             _btnApply = new Button { Text = "Apply Selection", AutoSize = true, Margin = new Padding(5) };
@@ -537,13 +588,56 @@ namespace MakeYourChoice
             tlp.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // tip
             tlp.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // buttons
 
-            tlp.Controls.Add(_lv, 0, 0);
+            tlp.Controls.Add(_dgv, 0, 0);
             tlp.Controls.Add(_menuStrip, 0, 1);
             tlp.Controls.Add(_lblTip, 0, 2);
             tlp.Controls.Add(_buttonPanel, 0, 3);
 
             Controls.Add(tlp);
         }
+
+        private void PopulateDataGridView()
+        {
+            _dgv.Rows.Clear();
+
+            var groups = new[]
+            {
+                new { Id = "Europe", Title = "Europe" },
+                new { Id = "Americas", Title = "The Americas" },
+                new { Id = "Asia", Title = "Asia (Excl. Cn)" },
+                new { Id = "Oceania", Title = "Oceania" },
+                new { Id = "China", Title = "Mainland China" }
+            };
+
+            foreach (var g in groups)
+            {
+                int headerIdx = _dgv.Rows.Add(false, g.Title, "");
+                var headerRow = _dgv.Rows[headerIdx];
+                headerRow.Tag = "[HEADER]";
+                headerRow.DefaultCellStyle.Font = new Font(_dgv.Font, FontStyle.Bold);
+                headerRow.ReadOnly = true;
+
+                foreach (var kv in _regions)
+                {
+                    if (GetGroupName(kv.Key) == g.Id)
+                    {
+                        var regionKey = kv.Key;
+                        var displayName = regionKey + (kv.Value.Stable ? string.Empty : " ⚠︎");
+                        int idx = _dgv.Rows.Add(false, displayName, "…");
+                        var row = _dgv.Rows[idx];
+                        row.Tag = regionKey;
+
+                        if (!kv.Value.Stable)
+                        {
+                            row.Cells[1].Style.ForeColor = Color.Orange;
+                            row.Cells[1].ToolTipText = "Unstable: issues may occur.";
+                        }
+                    }
+                }
+            }
+            UpdateRegionDataGridViewAppearance();
+        }
+
 
         private void HandleCustomSplashArt()
         {
@@ -888,45 +982,44 @@ namespace MakeYourChoice
             {
                 // Collect ping results for all regions
                 var results = new Dictionary<string, long>();
-                foreach (ListViewItem item in _lv.Items)
+                foreach (DataGridViewRow row in _dgv.Rows)
                 {
-                    long ms;
+                    long ms = -1;
                     try
                     {
-                        var regionKey = (string)item.Tag;
-                        var hosts = _regions[regionKey].Hosts;
+                        var tag = row.Tag as string;
+                        if (tag == "[HEADER]" || tag == null) continue;
+
+                        var hosts = _regions[tag].Hosts;
                         var reply = await pinger.SendPingAsync(hosts[0], 2000);
                         ms = reply.Status == IPStatus.Success ? reply.RoundtripTime : -1;
+                        results[tag] = ms;
                     }
                     catch
                     {
-                        ms = -1;
+                        if (row.Tag is string rk && rk != "[HEADER]")
+                            results[rk] = -1;
                     }
-                    results[(string)item.Tag] = ms;
                 }
 
                 // Update UI in one batch to avoid flicker (only after handles exist)
-                if (!IsHandleCreated || IsDisposed || !_lv.IsHandleCreated || _lv.IsDisposed)
+                if (!IsHandleCreated || IsDisposed || !_dgv.IsHandleCreated || _dgv.IsDisposed)
                     return;
 
                 void UpdateLatencyUI()
                 {
-                    _lv.BeginUpdate();
-                    try
+                    foreach (DataGridViewRow row in _dgv.Rows)
                     {
-                        foreach (ListViewItem item in _lv.Items)
-                        {
-                            var regionKey = (string)item.Tag;
-                            var ms = results[regionKey];
-                            var sub = item.SubItems[1];
-                            sub.Text = ms >= 0 ? $"{ms} ms" : "disconnected";
-                            sub.ForeColor = GetColorForLatency(ms);
-                            sub.Font = new Font(sub.Font, FontStyle.Italic);
-                        }
-                    }
-                    finally
-                    {
-                        _lv.EndUpdate();
+                        var tag = row.Tag as string;
+                        if (tag == "[HEADER]" || tag == null) continue;
+
+                        if (!results.ContainsKey(tag)) continue;
+
+                        var ms = results[tag];
+                        var cell = row.Cells[2];
+                        cell.Value = ms >= 0 ? $"{ms} ms" : "disconnected";
+                        cell.Style.ForeColor = GetColorForLatency(ms);
+                        cell.Style.Font = new Font(_dgv.Font, FontStyle.Italic);
                     }
                 }
 
@@ -1197,7 +1290,11 @@ namespace MakeYourChoice
             // if universal redirect mode, redirect all endpoints to selected region's IPs
             if (_applyMode == ApplyMode.UniversalRedirect)
             {
-                if (_lv.CheckedItems.Count != 1)
+                var checkedRows = _dgv.Rows.Cast<DataGridViewRow>()
+                    .Where(r => r.Tag as string != "[HEADER]" && Convert.ToBoolean(r.Cells[0].Value))
+                    .ToList();
+
+                if (checkedRows.Count != 1)
                 {
                     MessageBox.Show(
                         "Please select only one server when using Universal Redirect mode.",
@@ -1207,7 +1304,7 @@ namespace MakeYourChoice
                     return;
                 }
 
-                var regionKey = (string)_lv.CheckedItems[0].Tag;
+                var regionKey = (string)checkedRows[0].Tag;
                 var hosts = _regions[regionKey].Hosts;
                 var serviceHost = hosts[0];
                 var pingHost = hosts.Length > 1 ? hosts[1] : hosts[0];
@@ -1307,7 +1404,11 @@ namespace MakeYourChoice
             }
 
             // existing gatekeep mode logic
-            if (_lv.CheckedItems.Count == 0)
+            var checkedItems = _dgv.Rows.Cast<DataGridViewRow>()
+                                    .Where(r => r.Tag as string != "[HEADER]" && Convert.ToBoolean(r.Cells[0].Value))
+                                    .ToList();
+
+            if (checkedItems.Count == 0)
             {
                 MessageBox.Show(
                     "Please select at least one server to allow.",
@@ -1322,8 +1423,8 @@ namespace MakeYourChoice
                 File.Copy(HostsPath, HostsPath + ".bak", true);
 
                 // Determine if user selected any stable servers
-                var selectedRegions = _lv.CheckedItems.Cast<ListViewItem>()
-                                        .Select(item => (string)item.Tag)
+                var selectedRegions = checkedItems
+                                        .Select(row => (string)row.Tag)
                                         .ToList();
                 bool anyStableSelected = selectedRegions.Any(regionKey => _regions[regionKey].Stable);
 
@@ -1378,9 +1479,11 @@ namespace MakeYourChoice
                 sb.AppendLine($"# Need help? Discord: {DiscordUrl}");
                 sb.AppendLine();
 
-                foreach (ListViewItem item in _lv.Items)
+                foreach (DataGridViewRow row in _dgv.Rows)
                 {
-                    var regionKey = (string)item.Tag;
+                    var tag = row.Tag as string;
+                    if (tag == "[HEADER]" || tag == null) continue;
+                    var regionKey = tag;
                     bool allow = allowedSet.Contains(regionKey);
                     var hosts = _regions[regionKey].Hosts;
                     foreach (var h in hosts)
@@ -1967,7 +2070,7 @@ namespace MakeYourChoice
                 _darkMode = cbDarkMode.Checked;
                 SaveSettings();
                 ApplyTheme();
-                UpdateRegionListViewAppearance();
+                UpdateRegionDataGridViewAppearance();
 
                 if (darkModeChanged)
                 {
@@ -1977,23 +2080,33 @@ namespace MakeYourChoice
             }
         }
 
-        private void UpdateRegionListViewAppearance()
+        private void UpdateRegionDataGridViewAppearance()
         {
-            var defaultColor = _lv.ForeColor;
-            foreach (ListViewItem item in _lv.Items)
+            var defaultColor = _dgv.DefaultCellStyle.ForeColor;
+            foreach (DataGridViewRow row in _dgv.Rows)
             {
-                var regionKey = (string)item.Tag;
+                var tag = row.Tag as string;
+                if (tag == "[HEADER]")
+                {
+                    row.DefaultCellStyle.BackColor = _darkMode ? Color.FromArgb(45, 45, 48) : Color.FromArgb(230, 230, 230);
+                    row.DefaultCellStyle.ForeColor = _darkMode ? Color.White : Color.Black;
+                    continue;
+                }
+
+                if (tag == null) continue;
+
+                var regionKey = tag;
                 if (_mergeUnstable && !_regions[regionKey].Stable)
                 {
-                    item.Text = regionKey;
-                    item.ForeColor = defaultColor;
-                    item.ToolTipText = string.Empty;
+                    row.Cells[1].Value = regionKey;
+                    row.Cells[1].Style.ForeColor = defaultColor;
+                    row.Cells[1].ToolTipText = string.Empty;
                 }
                 else if (!_regions[regionKey].Stable)
                 {
-                    item.Text = regionKey + " ⚠︎";
-                    item.ForeColor = Color.Orange;
-                    item.ToolTipText = "Unstable server: latency issues may occur.";
+                    row.Cells[1].Value = regionKey + " ⚠︎";
+                    row.Cells[1].Style.ForeColor = Color.Orange;
+                    row.Cells[1].ToolTipText = "Unstable server: latency issues may occur.";
                 }
             }
         }
